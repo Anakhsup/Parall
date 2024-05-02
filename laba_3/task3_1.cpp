@@ -1,65 +1,99 @@
-#include <iostream>
+#include<iostream>   
+#include<array>
 #include <vector>
 #include <thread>
-#include <omp.h>
-#include <chrono>
 
-using namespace std;
-int potoks;
-
-void initialize(const int N, unique_ptr<double[]>& matrix, unique_ptr<double[]>& vector, unique_ptr<double[]>& result) {
-    #pragma omp parallel for schedule(guided, int(N / (potoks * 2)))
-    for (int i = 0; i < N; i++) 
-    {
-        vector[i] = 0.0;
-        result[i] = 0.0;
-        for (int j = 0; j < N; j++) 
-        {
-            matrix[i * N + j] = (i == j) ? 2.0 : 1.0;
-        }
-    }
+double cpuSecond()
+{
+	struct timespec ts;
+	timespec_get(&ts, TIME_UTC);
+	return ((double)ts.tv_sec + (double)ts.tv_nsec * 1.e-9);
 }
 
-void matrix_vector_mul(const int N, unique_ptr<double[]>& matrix, unique_ptr<double[]>& vector, unique_ptr<double[]>& result) 
-{
-  #pragma omp parallel for schedule(guided, int(N / (potoks * 2)))
-  for (int i = 0; i < N; ++i) 
-  {
-    result[i] = 0.0;
-    for (int j = 0; j < N; ++j) 
-    {
-      result[i] += matrix[i * N + j] * vector[j];
-    }
-  }
+void initialization(double* matrix, double* vect, int sizeOfMatrix, int countOfThreads, int lb , int ub) {
+
+	for (int i = lb; i < ub; i++) {
+		for (int j = 0; j < sizeOfMatrix; j++) {
+			matrix[i * sizeOfMatrix + j] = i + j;
+		}
+	}
+
+	for (int j = lb; j < ub; j++) {
+		vect[j] = j;
+	}
 }
 
-void print_time_of_program(double time, int potoks, int N) 
+void matrixVectorProduct(double* matrix, double* vect, double* result, int sizeOfMatrix, int countOfThreads, int lb, int ub)
 {
-  cout << "Size of matrix: " << N << endl << "Potoks: " << potoks << endl << "Time of working: " << time << " seconds" << endl;
+	for (int i = lb; i < ub; i++) {
+		for (int j = 0; j < sizeOfMatrix; j++)
+			result[i] += matrix[i * sizeOfMatrix + j] * vect[j];
+	}
 }
 
-int main(int argc, char const *argv[]) 
+double runSerial(int sizeOfMatrix)
 {
-    if (argc < 3) {
-        cout << " N= - size of matrix и potoks= - numbers of potoks" << endl;
-        return 0;
-    }
+	double time = cpuSecond();
 
-    int N = stoi(argv[1]);
-    potoks = stoi(argv[2]);
+	double* matrix = new double[sizeOfMatrix * sizeOfMatrix];
+	double* vect = new double[sizeOfMatrix];
+	double* result = new double[sizeOfMatrix]{};
 
-    omp_set_num_threads(potoks);
+	initialization(matrix, vect, sizeOfMatrix, 1, 0, sizeOfMatrix);
+	matrixVectorProduct(matrix, vect, result, sizeOfMatrix, 1, 0, sizeOfMatrix);
 
-    unique_ptr<double[]> matrix(new double[N * N]);
-    unique_ptr<double[]> vector(new double[N]);
-    unique_ptr<double[]> result(new double[N]);
+	time = cpuSecond() - time;
 
-    initialize(N, matrix, vector, result);
-  
-    double start_of_programm = omp_get_wtime();
-    matrix_vector_mul(N, matrix, vector, result);
-    double end_of_programm = omp_get_wtime();
+	std::cout << "Size of matrix " << sizeOfMatrix << "*" << sizeOfMatrix << " countOfThreads = " << 1 << " Time = " << time << " S = " << 1 << std::endl;
+	return time;
+}
 
-    print_time_of_program(end_of_programm - start_of_programm, potoks, N);
-    return 0;
+void runParallel(double* matrix, double* vect, double* result, int sizeOfMatrix, int countOfThreads, double serialTime) {
+	std::vector<std::jthread> threads;
+
+	double time = cpuSecond();
+
+	for (int threadid = 0; threadid < countOfThreads; threadid++) {
+
+		int itemsPerThread = sizeOfMatrix / countOfThreads;
+		int lb = threadid * itemsPerThread;
+		int ub = (threadid == countOfThreads - 1) ? (sizeOfMatrix - 1) : (lb + itemsPerThread - 1);
+		threads.emplace_back(initialization, matrix, vect, sizeOfMatrix, countOfThreads, lb, ub);
+	}
+	threads.clear();
+
+	for (int threadid = 0; threadid < countOfThreads; threadid++) {
+
+		int itemsPerThread = sizeOfMatrix / countOfThreads;
+		int lb = threadid * itemsPerThread;
+		int ub = (threadid == countOfThreads - 1) ? (sizeOfMatrix - 1) : (lb + itemsPerThread - 1);
+		threads.emplace_back(matrixVectorProduct, matrix, vect, result, sizeOfMatrix, countOfThreads, lb, ub);		
+	}
+	threads.clear();
+
+	time = cpuSecond() - time;
+	std::cout << "Size of matrix " << sizeOfMatrix << "*" << sizeOfMatrix << " countOfThreads = " << countOfThreads << " Time = " << time << " S = " << serialTime / time << std::endl;
+}
+
+int main(int argc, char** argv)
+{
+	std::array<int, 2> matrixSizes{20000, 40000};
+	std::array<int, 7> numberOfThreads{2, 4, 7, 8, 16, 20, 40};
+
+	double timeSerialTwo = runSerial(matrixSizes[0]);
+	double timeSerialFour = runSerial(matrixSizes[1]);
+
+	for (int i = 0; i < matrixSizes.size(); i++) {
+
+		double* matrix = new double[matrixSizes[i] * matrixSizes[i]];
+		double* vect = new double[matrixSizes[i]];
+		
+		std::cout << "Matrix - vector product(c[m] = a[m, n] * b[n]; m = " << matrixSizes[i] << " n = " << matrixSizes[i] << std::endl;
+		for (int j = 0; j < numberOfThreads.size(); j++) {
+			double* result = new double[matrixSizes[i]] {};
+			if (i == 0) runParallel(matrix, vect, result, matrixSizes[i], numberOfThreads[j], timeSerialTwo);
+			else runParallel(matrix, vect, result, matrixSizes[i], numberOfThreads[j], timeSerialFour);
+		}
+	}
+	return 0;
 }
