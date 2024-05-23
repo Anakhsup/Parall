@@ -1,0 +1,4 @@
+/home/a.kalugina2/build/CMakeFiles/program_float.dir
+/home/a.kalugina2/build/CMakeFiles/program_double.dir
+/home/a.kalugina2/build/CMakeFiles/edit_cache.dir
+/home/a.kalugina2/build/CMakeFiles/rebuild_cache.dir
